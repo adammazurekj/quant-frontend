@@ -1,16 +1,16 @@
-// src/components/StockChart.jsx  (v2.2 – bug‑free intraday axis)
+// src/components/StockChart.jsx  (v2.3 – trade markers added, intraday axis bug-free)
 import { useEffect, useState } from "react";
 import Plot from "react-plotly.js";
-import { getStockChart } from "../api";
+import { getStockChart, getTrades } from "../api";   // ← NEW helper
 
 /**
- * Displays price plus 5‑ and 20‑period SMAs.
+ * Displays price plus 5- and 20-period SMAs (and trade markers).
  *
  * props
  * ─────
  * symbol     string   – ticker
  * days       number   – # calendar days to show (default 1)
- * intraday   boolean  – true ⇒ 5‑min bars, false ⇒ daily bars
+ * intraday   boolean  – true ⇒ 5-min bars, false ⇒ daily bars
  * title      string   – optional caption above the chart
  */
 export default function StockChart({
@@ -20,12 +20,15 @@ export default function StockChart({
   title,
 }) {
   const [series, setSeries] = useState(null);
+  const [trades, setTrades] = useState(null);          // ← NEW
 
-  // ── Fetch loop ─────────────────────────────────────────────────────────
+  // ── Price/SMA fetch loop ───────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
     const pull = () =>
-      getStockChart(symbol, days, intraday).then((d) => alive && setSeries(d));
+      getStockChart(symbol, days, intraday).then(
+        (d) => alive && setSeries(d)
+      );
 
     pull();
     const id = setInterval(pull, 60_000);
@@ -34,6 +37,20 @@ export default function StockChart({
       clearInterval(id);
     };
   }, [symbol, days, intraday]);
+
+  // ── Trades fetch loop ──────────────────────────────────────────────────
+  useEffect(() => {
+    let alive = true;
+    const pull = () =>
+      getTrades(symbol, days).then((d) => alive && setTrades(d));
+
+    pull();
+    const id = setInterval(pull, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [symbol, days]);
 
   // ── Loading / empty guard ──────────────────────────────────────────────
   if (!series?.points?.length)
@@ -45,7 +62,7 @@ export default function StockChart({
 
   const { points } = series;
 
-  // ── Build traces & inject nulls on big gaps ────────────────────────────
+  // ── Build line traces & inject nulls on big gaps ───────────────────────
   const TS = [],
     PRICE = [],
     FAST = [],
@@ -69,19 +86,32 @@ export default function StockChart({
     SLOW.push(p.slow);
   });
 
-  // ── x‑axis breaks: weekends + overnight hours (robust) ─────────────────
+  // ── Build trade-marker arrays ──────────────────────────────────────────
+  const TTS = [],
+    MPRICE = [],
+    MSYMBOL = [],
+    MCOLOR = [];
+  if (trades?.length) {
+    trades.forEach((t) => {
+      TTS.push(t.ts);
+      MPRICE.push(t.price);
+      MSYMBOL.push(t.side === "buy" ? "triangle-up" : "triangle-down");
+      MCOLOR.push(t.side === "buy" ? "#2ecc71" : "#e74c3c");
+    });
+  }
+
+  // ── x-axis breaks: weekends + overnight hours (robust) ─────────────────
   const rangebreaks = [{ bounds: ["sat", "mon"] }];
   if (intraday) {
-    // keep 09 h hour visible (covers 09:30 open) – so skip 00‑08 and 17‑24
     rangebreaks.push(
       { pattern: "hour", bounds: [17, 24] },
       { pattern: "hour", bounds: [0, 8] }
     );
   }
-
-  // If breaking wipes out the session (<3 points) fall back to no hour breaks
   const effectiveBreaks =
-    intraday && TS.filter(Boolean).length < 3 ? rangebreaks.slice(0, 1) : rangebreaks;
+    intraday && TS.filter(Boolean).length < 3
+      ? rangebreaks.slice(0, 1)
+      : rangebreaks;
 
   // ── Colours & hover templates ──────────────────────────────────────────
   const C = { price: "#1f77b4", fast: "#ff7f0e", slow: "#2ca02c" };
@@ -100,27 +130,43 @@ export default function StockChart({
             name: "Price",
             line: { width: 2, color: C.price },
             connectgaps: true,
-            hovertemplate: "%{x}<br>Price  %{y:$,.2f}<extra></extra>",
+            hovertemplate: "%{x}<br>Price  %{y:$,.2f}<extra></extra>",
           },
           {
             x: TS,
             y: FAST,
             type: "scatter",
             mode: "lines",
-            name: "Fast MA (5d)",
+            name: "Fast MA (5d)",
             line: { width: 1, color: C.fast },
             connectgaps: true,
-            hovertemplate: "%{x}<br>Fast MA %{y:$,.2f}<extra></extra>",
+            hovertemplate: "%{x}<br>Fast MA %{y:$,.2f}<extra></extra>",
           },
           {
             x: TS,
             y: SLOW,
             type: "scatter",
             mode: "lines",
-            name: "Slow MA (20d)",
+            name: "Slow MA (20d)",
             line: { width: 1, color: C.slow },
             connectgaps: true,
-            hovertemplate: "%{x}<br>Slow MA %{y:$,.2f}<extra></extra>",
+            hovertemplate: "%{x}<br>Slow MA %{y:$,.2f}<extra></extra>",
+          },
+          // ── NEW trade-marker scatter ───────────────────────────────
+          {
+            x: TTS,
+            y: MPRICE,
+            type: "scatter",
+            mode: "markers",
+            name: "Trades",
+            marker: {
+              symbol: MSYMBOL,
+              size: 10,
+              color: MCOLOR,
+              line: { width: 1, color: "#333" },
+            },
+            hovertemplate: "%{x}<br>%{text}: %{y:$,.2f}<extra></extra>",
+            text: MSYMBOL.map((s) => (s === "triangle-up" ? "Buy" : "Sell")),
           },
         ]}
         layout={{
@@ -140,4 +186,3 @@ export default function StockChart({
     </div>
   );
 }
-
