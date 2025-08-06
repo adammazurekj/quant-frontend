@@ -1,7 +1,7 @@
-// src/components/StockChart.jsx  (v2.3 – trade markers added, intraday axis bug-free)
+// src/components/StockChart.jsx  (v2.5 – trades shifted UTC→ET by −4 h)
 import { useEffect, useState } from "react";
 import Plot from "react-plotly.js";
-import { getStockChart, getTrades } from "../api";   // ← NEW helper
+import { getStockChart, getTrades } from "../api";
 
 /**
  * Displays price plus 5- and 20-period SMAs (and trade markers).
@@ -20,15 +20,16 @@ export default function StockChart({
   title,
 }) {
   const [series, setSeries] = useState(null);
-  const [trades, setTrades] = useState(null);          // ← NEW
+  const [trades, setTrades] = useState(null);
+
+  // ── CONSTANT: simple UTC → ET delta (update to 5 in winter) ────────────
+  const ET_OFFSET_MS = 4 * 60 * 60 * 1000; // −4 h = EDT
 
   // ── Price/SMA fetch loop ───────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
     const pull = () =>
-      getStockChart(symbol, days, intraday).then(
-        (d) => alive && setSeries(d)
-      );
+      getStockChart(symbol, days, intraday).then((d) => alive && setSeries(d));
 
     pull();
     const id = setInterval(pull, 60_000);
@@ -80,7 +81,7 @@ export default function StockChart({
         SLOW.push(null, null);
       }
     }
-    TS.push(p.ts);
+    TS.push(p.ts);          // bars already in ET → no shift
     PRICE.push(p.price);
     FAST.push(p.fast);
     SLOW.push(p.slow);
@@ -93,14 +94,15 @@ export default function StockChart({
     MCOLOR = [];
   if (trades?.length) {
     trades.forEach((t) => {
-      TTS.push(t.ts);
+      // shift UTC → ET by simple −4 h
+      TTS.push(new Date(new Date(t.ts).getTime() - ET_OFFSET_MS));
       MPRICE.push(t.price);
       MSYMBOL.push(t.side === "buy" ? "triangle-up" : "triangle-down");
       MCOLOR.push(t.side === "buy" ? "#2ecc71" : "#e74c3c");
     });
   }
 
-  // ── x-axis breaks: weekends + overnight hours (robust) ─────────────────
+  // ── x-axis breaks: weekends + overnight hours ──────────────────────────
   const rangebreaks = [{ bounds: ["sat", "mon"] }];
   if (intraday) {
     rangebreaks.push(
@@ -152,7 +154,6 @@ export default function StockChart({
             connectgaps: true,
             hovertemplate: "%{x}<br>Slow MA %{y:$,.2f}<extra></extra>",
           },
-          // ── NEW trade-marker scatter ───────────────────────────────
           {
             x: TTS,
             y: MPRICE,
