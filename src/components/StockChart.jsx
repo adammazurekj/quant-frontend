@@ -1,189 +1,110 @@
-// src/components/StockChart.jsx  (v2.5 – trades shifted UTC→ET by −4 h)
-import { useEffect, useState } from "react";
+import React from "react";
 import Plot from "react-plotly.js";
-import { getStockChart, getTrades } from "../api";
 
-/**
- * Displays price plus 5- and 20-period SMAs (and trade markers).
- *
- * props
- * ─────
- * symbol     string   – ticker
- * days       number   – # calendar days to show (default 1)
- * intraday   boolean  – true ⇒ 5-min bars, false ⇒ daily bars
- * title      string   – optional caption above the chart
- */
-export default function StockChart({
-  symbol,
-  days = 1,
-  intraday = false,
-  title,
-}) {
-  const [series, setSeries] = useState(null);
-  const [trades, setTrades] = useState(null);
+const StockChart = ({ points, trades = [] }) => {
+  // Prepare the data series
+  const timestamps = points.map((p) => new Date(p.ts));
+  const price = points.map((p) => p.price);
+  const fast = points.map((p) => p.fast);
+  const slow = points.map((p) => p.slow);
 
-  // ── CONSTANT: simple UTC → ET delta (update to 5 in winter) ────────────
-  const ET_OFFSET_MS = 4 * 60 * 60 * 1000; // −4 h = EDT
+  const traces = [
+    {
+      x: timestamps,
+      y: price,
+      type: "scatter",
+      mode: "lines",
+      name: "Price",
+      line: { color: "#4a90e2", width: 2 },
+    },
+  ];
 
-  // ── Price/SMA fetch loop ───────────────────────────────────────────────
-  useEffect(() => {
-    let alive = true;
-    const pull = () =>
-      getStockChart(symbol, days, intraday).then((d) => alive && setSeries(d));
-
-    pull();
-    const id = setInterval(pull, 60_000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [symbol, days, intraday]);
-
-  // ── Trades fetch loop ──────────────────────────────────────────────────
-  useEffect(() => {
-    let alive = true;
-    const pull = () =>
-      getTrades(symbol, days).then((d) => alive && setTrades(d));
-
-    pull();
-    const id = setInterval(pull, 60_000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [symbol, days]);
-
-  // ── Loading / empty guard ──────────────────────────────────────────────
-  if (!series?.points?.length)
-    return (
-      <div className="card bg-white p-6 text-sm text-gray-500">
-        No data for {symbol}.
-      </div>
-    );
-
-  const { points } = series;
-
-  // ── Build line traces & inject nulls on big gaps ───────────────────────
-  const TS = [],
-    PRICE = [],
-    FAST = [],
-    SLOW = [];
-  const GAP_MIN = intraday ? 90 : 1500; // minutes
-
-  points.forEach((p, i) => {
-    if (i) {
-      const prev = new Date(points[i - 1].ts);
-      const curr = new Date(p.ts);
-      if ((curr - prev) / 60000 > GAP_MIN) {
-        TS.push(null, null);
-        PRICE.push(null, null);
-        FAST.push(null, null);
-        SLOW.push(null, null);
-      }
-    }
-    TS.push(p.ts);          // bars already in ET → no shift
-    PRICE.push(p.price);
-    FAST.push(p.fast);
-    SLOW.push(p.slow);
-  });
-
-  // ── Build trade-marker arrays ──────────────────────────────────────────
-  const TTS = [],
-    MPRICE = [],
-    MSYMBOL = [],
-    MCOLOR = [];
-  if (trades?.length) {
-    trades.forEach((t) => {
-      // shift UTC → ET by simple −4 h
-      TTS.push(new Date(new Date(t.ts).getTime() - ET_OFFSET_MS));
-      MPRICE.push(t.price);
-      MSYMBOL.push(t.side === "buy" ? "triangle-up" : "triangle-down");
-      MCOLOR.push(t.side === "buy" ? "#2ecc71" : "#e74c3c");
+  if (fast.some((v) => v != null)) {
+    traces.push({
+      x: timestamps,
+      y: fast,
+      type: "scatter",
+      mode: "lines",
+      name: "Fast MA",
+      line: { color: "#28a745", width: 2 },
     });
   }
 
-  // ── x-axis breaks: weekends + overnight hours ──────────────────────────
-  const rangebreaks = [{ bounds: ["sat", "mon"] }];
-  if (intraday) {
-    rangebreaks.push(
-      { pattern: "hour", bounds: [17, 24] },
-      { pattern: "hour", bounds: [0, 8] }
-    );
+  if (slow.some((v) => v != null)) {
+    traces.push({
+      x: timestamps,
+      y: slow,
+      type: "scatter",
+      mode: "lines",
+      name: "Slow MA",
+      line: { color: "#e67e22", width: 2 },
+    });
   }
-  const effectiveBreaks =
-    intraday && TS.filter(Boolean).length < 3
-      ? rangebreaks.slice(0, 1)
-      : rangebreaks;
 
-  // ── Colours & hover templates ──────────────────────────────────────────
-  const C = { price: "#1f77b4", fast: "#ff7f0e", slow: "#2ca02c" };
+  // --- Trade markers ---
+  trades.forEach((trade) => {
+    const ts = new Date(trade.ts);
+
+    // Find closest price point to this timestamp
+    let closestIdx = 0;
+    let minDiff = Infinity;
+    timestamps.forEach((t, i) => {
+      const diff = Math.abs(t - ts);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIdx = i;
+      }
+    });
+
+    const tradePrice = price[closestIdx];
+
+    let marker = {};
+    if (trade.direction === "LONG") {
+      marker = { symbol: "triangle-up", size: 12, color: "green" };
+    } else if (trade.direction === "SHORT") {
+      marker = { symbol: "triangle-down", size: 12, color: "red" };
+    } else if (trade.direction === "CLOSE") {
+      marker = { symbol: "circle", size: 10, color: "#ff5733" }; // reddish-orange
+    }
+
+    traces.push({
+      x: [ts],
+      y: [tradePrice],
+      type: "scatter",
+      mode: "markers",
+      marker,
+      name: `${trade.direction} @ ${ts.toLocaleTimeString()}`,
+      hoverinfo: "name",
+      showlegend: false,
+    });
+  });
 
   return (
-    <div className="space-y-1 w-full">
-      {title && <h4 className="text-sm font-medium text-gray-600">{title}</h4>}
-
-      <Plot
-        data={[
-          {
-            x: TS,
-            y: PRICE,
-            type: "scatter",
-            mode: "lines",
-            name: "Price",
-            line: { width: 2, color: C.price },
-            connectgaps: true,
-            hovertemplate: "%{x}<br>Price  %{y:$,.2f}<extra></extra>",
-          },
-          {
-            x: TS,
-            y: FAST,
-            type: "scatter",
-            mode: "lines",
-            name: "Fast MA (5d)",
-            line: { width: 1, color: C.fast },
-            connectgaps: true,
-            hovertemplate: "%{x}<br>Fast MA %{y:$,.2f}<extra></extra>",
-          },
-          {
-            x: TS,
-            y: SLOW,
-            type: "scatter",
-            mode: "lines",
-            name: "Slow MA (20d)",
-            line: { width: 1, color: C.slow },
-            connectgaps: true,
-            hovertemplate: "%{x}<br>Slow MA %{y:$,.2f}<extra></extra>",
-          },
-          {
-            x: TTS,
-            y: MPRICE,
-            type: "scatter",
-            mode: "markers",
-            name: "Trades",
-            marker: {
-              symbol: MSYMBOL,
-              size: 10,
-              color: MCOLOR,
-              line: { width: 1, color: "#333" },
-            },
-            hovertemplate: "%{x}<br>%{text}: %{y:$,.2f}<extra></extra>",
-            text: MSYMBOL.map((s) => (s === "triangle-up" ? "Buy" : "Sell")),
-          },
-        ]}
-        layout={{
-          autosize: true,
-          height: 220,
-          margin: { l: 30, r: 10, t: 10, b: 30 },
-          showlegend: false,
-          xaxis: { type: "date", rangebreaks: effectiveBreaks },
-          yaxis: { automargin: true },
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor: "rgba(0,0,0,0)",
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: "100%" }}
-        useResizeHandler
-      />
-    </div>
+    <Plot
+      data={traces}
+      layout={{
+        autosize: true,
+        height: 300,
+        margin: { l: 40, r: 20, t: 20, b: 40 },
+        xaxis: {
+          title: "Time",
+          type: "date",
+          tickformat: "%H:%M",
+        },
+        yaxis: {
+          title: "Price",
+          fixedrange: false,
+        },
+        legend: { orientation: "h", x: 0, y: 1.1 },
+      }}
+      useResizeHandler={true}
+      style={{ width: "100%", height: "100%" }}
+      config={{
+        displayModeBar: false,
+        responsive: true,
+      }}
+    />
   );
-}
+};
+
+export default StockChart;

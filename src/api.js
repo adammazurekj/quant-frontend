@@ -1,31 +1,38 @@
-// src/api.js --------------------------------------------------
-// Thin helpers around the FastAPI backend
-
 const BASE = "https://dashboard-api-422591363136.us-central1.run.app";
-//const BASE = "http://127.0.0.1:8000"
-// ── Portfolio & positions ─────────────────────────────────────
-export const getPortfolio = () => fetch(`${BASE}/portfolio`).then(r => r.json());
-export const getPositions = () => fetch(`${BASE}/positions`).then(r => r.json());
 
-// ── Price-and-SMA chart data ──────────────────────────────────
-/**
- * @param {string}  symbol    – ticker
- * @param {number}  days      – # calendar days to display (default 1)
- * @param {boolean} intraday  – true ⇒ 5-min bars, false ⇒ daily bars
- */
-export const getStockChart = (symbol, days = 1, intraday = false) =>
-  fetch(
-    `${BASE}/stock/${symbol}?days=${days}${intraday ? "&intraday=true" : ""}`
-  ).then(r => r.json());
+async function safeFetch(url, { emptyOn404 = false } = {}) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    if (emptyOn404 && res.status === 404) return null; // interpret as "no data"
+    throw new Error(`Request failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
 
-// ── NEW: filled-order markers for chart triangles ─────────────
-/**
- * @param {string} symbol – ticker
- * @param {number} days   – look-back window (default 1)
- */
-export const getTrades = (symbol, days = 1) =>
-  fetch(`${BASE}/trades/${symbol}?days=${days}`).then(r => r.json());
+function qs(params = {}) {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) u.set(k, String(v));
+  }
+  const s = u.toString();
+  return s ? `?${s}` : "";
+}
 
-export const getBotHealth = () =>
-  fetch(`${BASE}/bot-health`).then(r => r.json());
-
+export async function getStockChart(symbol, params = {}) {
+  return safeFetch(
+    `${BASE}/stock/${encodeURIComponent(symbol)}${qs(params)}`,
+    { emptyOn404: true }
+  );
+}
+export async function getTrades(symbol, params = {}) {
+  return safeFetch(
+    `${BASE}/trades/${encodeURIComponent(symbol)}${qs(params)}`,
+    { emptyOn404: true }
+  );
+}
+export async function getTradeLogs(symbol, params = {}) {
+  return safeFetch(
+    `${BASE}/logic/${encodeURIComponent(symbol)}${qs(params)}`,
+    { emptyOn404: true }
+  );
+}
