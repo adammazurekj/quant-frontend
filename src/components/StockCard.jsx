@@ -3,17 +3,39 @@ import StockChart from "./StockChart";
 import StockLogs from "./StockLogs";
 import { getStockChart, getTrades, getTradeLogs } from "../api";
 
-function formatUtcLabel(offsetDays) {
+function formatLaLabel(offsetDays) {
+  const tz = "America/Los_Angeles";
   const now = new Date();
-  const d = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + offsetDays,
-    0, 0, 0, 0
-  ));
-  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }).toLowerCase();
-  const month = d.toLocaleDateString("en-US", { month: "numeric", timeZone: "UTC" });
-  const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: "UTC" });
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(now);
+
+  const y = Number(parts.find(p => p.type === "year").value);
+  const m = Number(parts.find(p => p.type === "month").value);
+  const d = Number(parts.find(p => p.type === "day").value);
+
+  const baseAtUtcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const target = new Date(baseAtUtcNoon.getTime() + offsetDays * 86400000);
+
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  }).format(target).toLowerCase();
+
+  const month = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "numeric",
+  }).format(target);
+
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    day: "numeric",
+  }).format(target);
+
   return `${weekday} ${month}/${day}`;
 }
 
@@ -23,9 +45,8 @@ const StockCard = ({ symbol }) => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 0 = today, -1 = yesterday, ...
   const [scrollOffset, setScrollOffset] = useState(0);
-  const dayLabel = useMemo(() => formatUtcLabel(scrollOffset), [scrollOffset]);
+  const dayLabel = useMemo(() => formatLaLabel(scrollOffset), [scrollOffset]);
 
   const goPrevDay = () => setScrollOffset((x) => x - 1);
   const goNextDay = () => setScrollOffset((x) => Math.min(0, x + 1));
@@ -33,7 +54,6 @@ const StockCard = ({ symbol }) => {
   useEffect(() => {
     let alive = true;
 
-    // Clear previous day’s data immediately so stale UI doesn’t linger
     setLoading(true);
     setData(null);
     setTrades([]);
@@ -62,7 +82,6 @@ const StockCard = ({ symbol }) => {
         setTrades(tradeArr);
         setLogs(logArr);
       } else {
-        // Explicit empty state → will render "No data"
         setData({ points: [] });
         setTrades([]);
         setLogs([]);
@@ -80,7 +99,6 @@ const StockCard = ({ symbol }) => {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">{symbol}</h2>
 
-        {/* Date scroller */}
         <div className="flex items-center gap-3">
           <button
             onClick={goPrevDay}
@@ -90,7 +108,7 @@ const StockCard = ({ symbol }) => {
             ←
           </button>
           <div className="text-sm font-mono tabular-nums">
-            {dayLabel} <span className="opacity-60">(UTC)</span>
+            {dayLabel}
           </div>
           <button
             onClick={goNextDay}
@@ -106,14 +124,21 @@ const StockCard = ({ symbol }) => {
       {loading ? (
         <p>Loading...</p>
       ) : data?.points?.length > 0 ? (
-        <>
+        <div className="flex flex-col">
+          {/* Chart full width */}
           <StockChart
-            key={`${symbol}-${scrollOffset}`}   // force clean remount per day
+            key={`${symbol}-${scrollOffset}`}
             points={data.points}
             trades={trades}
           />
-          <StockLogs logs={logs} />
-        </>
+
+          {/* Logs bottom right, half width */}
+          <div className="flex justify-end mt-4">
+            <div className="w-full md:w-1/2">
+              <StockLogs logs={logs} />
+            </div>
+          </div>
+        </div>
       ) : (
         <p>No data</p>
       )}

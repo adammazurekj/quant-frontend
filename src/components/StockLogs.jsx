@@ -1,8 +1,8 @@
 import React from "react";
 
-const StockLogs = ({ logs }) => {
+const StockLogs = ({ logs, className = "h-48 md:h-56" }) => {
   return (
-    <div className="mt-4 h-72 overflow-y-auto border-t border-gray-200 pt-2 text-sm">
+    <div className={`mt-4 overflow-y-auto border-t border-gray-200 pt-2 text-sm ${className}`}>
       {logs.length === 0 ? (
         <p className="text-gray-500">No logs</p>
       ) : (
